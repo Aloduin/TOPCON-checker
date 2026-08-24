@@ -1,8 +1,8 @@
-# TOPCON 数据核查与图片提取工具
+# TOPCON 数据解析与图片复制工具
 
-用于“医院全量拷贝、公司按少量患者 ID 核查”的工作流。工具会解析 TOPCON
-患者清单和 `HIST0010` 图片索引，递归定位实际 JPG/PNG 文件，把命中图片安全复制到
-独立结果目录，并生成 Excel 反馈表。
+用于解析 TOPCON 导出的数据文件。工具可以读取记录清单和 `HIST0010` 图片索引，
+按指定 ID 查找关联信息，递归定位 JPG/PNG 图片，将匹配的数据复制到独立目录，
+并生成 Excel 结果表。
 
 ## 日常使用（推荐）
 
@@ -20,10 +20,10 @@ uv run python main.py
 
 在界面中：
 
-1. 选择从医院带回的全量数据目录。
+1. 选择 TOPCON 数据目录。
 2. 图片不在同一目录时，单独选择图片根目录；否则留空。
-3. 从 Excel 复制患者 ID 粘贴到输入框，或导入 TXT、CSV、XLSX。
-4. 选择公司侧的结果输出目录。
+3. 将待查询的 ID 粘贴到输入框，或从 TXT、CSV、XLSX 文件导入。
+4. 选择结果输出目录。
 5. 点击“查询、拷贝图片并生成 Excel”。
 
 每次执行会创建独立的 `TOPCON核查_时间戳` 文件夹：
@@ -32,29 +32,29 @@ uv run python main.py
 TOPCON核查_20260824_153000_000000/
 ├─ 核查反馈.xlsx
 └─ 图片/
-   ├─ 门诊ID-1_2016-01-02_女/
+   ├─ ID-1_2016-01-02_女/
    │  ├─ IM000001.JPG
    │  └─ IM000002.JPG
-   └─ 门诊ID-2_2018-03-04_男/
+   └─ ID-2_2018-03-04_男/
       └─ IM000010.PNG
 ```
 
 图片复制采用安全策略：内容相同的文件跳过，同名但内容不同的文件自动添加序号，
-不会覆盖已有文件。患者子目录固定使用“门诊ID_出生日期_性别”的格式，性别统一为
+不会覆盖已有文件。记录子目录使用“ID_出生日期_性别”的格式，性别统一为
 “男/女”；缺失值使用“出生日期未知/性别未知”。文件复制使用 `copy2`，保留原文件修改时间。
 
-### 患者号前导零
+### ID 前导零
 
-患者号始终按文本处理。推荐从 Excel 以文本形式复制，保留前导零。界面提供
-“忽略前导零的唯一匹配”选项，默认关闭；只有候选患者唯一时才允许这种匹配。
+ID 始终按文本处理。推荐从 Excel 以文本形式复制，保留前导零。界面提供
+“忽略前导零的唯一匹配”选项，默认关闭；只有候选记录唯一时才允许这种匹配。
 
 ## Excel 反馈表
 
 `核查反馈.xlsx` 包含四张工作表：
 
-- `查询汇总`：每个请求 ID 一行，显示匹配状态、患者信息、图片数量和复制数量。
+- `查询汇总`：每个请求 ID 一行，显示匹配状态、关联信息、图片数量和复制数量。
 - `图片明细`：每张图片一行，包含检查日期、图片名、源路径、复制状态和目标路径。
-- `异常与缺失`：集中列出未找到患者、缺少图片索引、图片文件缺失及复制失败。
+- `异常与缺失`：集中列出未找到的 ID、缺少图片索引、图片文件缺失及复制失败。
 - `拷贝记录`：逐文件审计源路径、目标路径、判重和复制结果。
 
 ID 列被强制保存为 Excel 文本，避免前导零丢失。日期按 `yyyy-mm-dd` 保存，表头可筛选
@@ -63,11 +63,11 @@ ID 列被强制保存为 Excel 文本，避免前导零丢失。日期按 `yyyy-
 ## 命令行批量使用
 
 ```powershell
-uv run python topcon_lookup.py D:\hospital_copy `
-  --ids-file D:\work\patient_ids.xlsx `
-  --image-root D:\hospital_copy `
-  --copy-to D:\results\selected_images `
-  --output D:\results\核查反馈.xlsx
+uv run python topcon_lookup.py D:\topcon_data `
+  --ids-file D:\work\ids.xlsx `
+  --image-root D:\topcon_images `
+  --copy-to D:\result\images `
+  --output D:\result\核查反馈.xlsx
 ```
 
 也可以直接传入少量 ID：
@@ -76,7 +76,7 @@ uv run python topcon_lookup.py D:\hospital_copy `
 uv run python topcon_lookup.py data --ids "000001,000002" --output output\核查反馈.xlsx
 ```
 
-## 全量解析
+## 完整数据解析
 
 项目使用 `uv` 管理 Python 3.13 环境，依赖由 `pyproject.toml` 和 `uv.lock`
 统一锁定，无需手工安装。
@@ -92,7 +92,7 @@ $env:UV_CACHE_DIR = "$PWD\.uv-cache"
 uv run python parse_topcon.py data --output-dir output
 ```
 
-若数据目录包含多个 `.TXT` 文件，可以明确指定患者导出文件：
+若数据目录包含多个 `.TXT` 文件，可以明确指定记录清单文件：
 
 ```powershell
 uv run python parse_topcon.py data --patients-file 2026.7.31.TXT --output-dir output
@@ -100,7 +100,7 @@ uv run python parse_topcon.py data --patients-file 2026.7.31.TXT --output-dir ou
 
 ### 输出文件
 
-- `output/patients.csv`：患者 TXT 中的 6 个原始字段，转换为 UTF-8 with BOM，
+- `output/patients.csv`：记录清单中的 6 个原始字段，转换为 UTF-8 with BOM，
   可直接用 Excel 打开。
 - `output/image_index.csv`：`HIST0010` 中每张图片对应的一条索引记录。
 - `output/parse_report.json`：记录数、图片扩展名、交叉匹配与格式校验统计。
@@ -108,7 +108,7 @@ uv run python parse_topcon.py data --patients-file 2026.7.31.TXT --output-dir ou
 `image_index.csv` 中已确认的主要列包括：
 
 - `patient_id`、`patient_name`、`sex`、`birth_date`、`registered_date`
-- `last_capture_date`：样本中每位患者的最后一次拍摄日期
+- `last_capture_date`：每条记录的最后一次拍摄日期
 - `capture_date`、`capture_time`、`capture_source`
 - `image_number_in_exam`：同次检查中的 `#1`、`#2` 等序号
 - `image_filename`：`IM######.JPG` 或 `IM######.PNG`
@@ -117,8 +117,8 @@ uv run python parse_topcon.py data --patients-file 2026.7.31.TXT --output-dir ou
 无法可靠解释的尾部字段使用带偏移量的列名，并同时保存在
 `unknown_tail_hex` 中，避免逆向解析时丢失信息。
 
-> 注意：Excel、CSV 和筛选图片包含真实患者信息。`output/` 已加入 `.gitignore`，
-> 请按医院隐私、授权范围与公司数据安全制度保存、传输和销毁。
+> 注意：Excel、CSV 和复制的图片可能包含敏感信息。`output/` 已加入 `.gitignore`，
+> 请根据实际数据管理要求妥善保存和处理。
 
 ## 运行测试
 
@@ -135,7 +135,7 @@ uv sync
 uv run pyinstaller --noconfirm --clean ".\TOPCON数据核查工具.spec"
 ```
 
-产物位于 `dist\TOPCON数据核查工具.exe`。单文件版本只需把这个 EXE 交给同事，
+产物位于 `dist\TOPCON数据核查工具.exe`。单文件版本只需复制这个 EXE，
 不需要同时复制 `_internal` 目录；首次启动可能因解压依赖而稍慢。
 
 如果需要更快启动、也更方便排查缺少组件的问题，可生成目录版：
@@ -146,5 +146,5 @@ uv run pyinstaller --noconfirm --clean --onedir --windowed `
   --name "TOPCON数据核查工具" main.py
 ```
 
-目录版必须把整个 `dist\TOPCON数据核查工具\` 文件夹交给同事，EXE 和
-`_internal` 缺一不可。`dist/`、`build/` 和医院原始数据都不会提交到 Git。
+目录版必须复制整个 `dist\TOPCON数据核查工具\` 文件夹，EXE 和 `_internal`
+缺一不可。`dist/`、`build/` 和本地数据目录都不会提交到 Git。
