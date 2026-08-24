@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.uv-cache/
+
+# Hospital source data and parsed exports may contain patient-identifying information
+data/
+output/
+TOPCON核查_*/
+*.xlsx
+*.xls
+*.csv
+*.tsv
+
+# Local backups and operating-system files
+dist_bk/
+*.log
+Thumbs.db
+.DS_Store
