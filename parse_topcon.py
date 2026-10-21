@@ -1,7 +1,7 @@
-"""Parse the TOPCON patient export and fixed-width HIST0010 image index.
+"""Parse the TOPCON patient export and fixed-width HIST image index.
 
 The parser is based on the structure observed in the files copied from the
-slit-lamp workstation.  It does not attempt to recover image pixels: HIST0010
+slit-lamp workstation.  It does not attempt to recover image pixels: HIST files
 contains metadata and image filenames, while the JPG/PNG files live elsewhere.
 """
 
@@ -21,6 +21,7 @@ from typing import Iterable
 
 
 RECORD_SIZE = 820
+HISTORY_FILENAME_RE = re.compile(r"HIST[0-9]{4}", re.I)
 TEXT_ENCODING = "gb18030"
 IMAGE_FILENAME_RE = re.compile(r"^IM(?P<sequence>[0-9]{6})\.(?P<ext>JPG|PNG)$", re.I)
 IMAGE_SUFFIXES = {".JPG", ".JPEG", ".PNG", ".BMP", ".TIF", ".TIFF"}
@@ -112,15 +113,15 @@ def _parse_image_sequence(filename: str) -> tuple[int | None, str]:
 
 
 def parse_history(path: str | Path) -> list[ImageRecord]:
-    """Parse fixed-width image index entries from a HIST0010 file."""
+    """Parse fixed-width image index entries from a HIST file."""
 
     input_path = Path(path)
     data = input_path.read_bytes()
     if not data:
-        raise TopconFormatError("HIST0010 为空")
+        raise TopconFormatError(f"{input_path.name} 为空")
     if len(data) % RECORD_SIZE != 0:
         raise TopconFormatError(
-            f"HIST0010 大小为 {len(data)} 字节，不是 {RECORD_SIZE} 字节记录的整数倍"
+            f"{input_path.name} 大小为 {len(data)} 字节，不是 {RECORD_SIZE} 字节记录的整数倍"
         )
 
     records: list[ImageRecord] = []
@@ -128,14 +129,14 @@ def parse_history(path: str | Path) -> list[ImageRecord]:
         raw = data[offset : offset + RECORD_SIZE]
         if raw[0:4] != b"*IM\0":
             raise TopconFormatError(
-                f"HIST0010 第 {record_index} 条记录没有 *IM 标记"
+                f"{input_path.name} 第 {record_index} 条记录没有 *IM 标记"
             )
 
         patient_id = _decode_field(raw, 4, 24)
         repeated_patient_id = _decode_field(raw, 620, 640)
         if patient_id != repeated_patient_id:
             raise TopconFormatError(
-                f"HIST0010 第 {record_index} 条记录的两个患者号字段不一致"
+                f"{input_path.name} 第 {record_index} 条记录的两个患者号字段不一致"
             )
 
         image_filename = _decode_field(raw, 756, 772)

@@ -4,14 +4,17 @@ import unittest
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from parse_topcon import TopconFormatError
 
 from topcon_lookup import (
     FILE_FOUND,
     STATUS_COMPLETE,
+    STATUS_INDEX_ONLY,
     STATUS_NOT_FOUND,
     copy_selected_images,
     load_ids_file,
     lookup_patient_ids,
+    locate_dataset,
     write_feedback_workbook,
 )
 
@@ -64,6 +67,61 @@ def _make_dataset(root: Path, *, include_image=True) -> tuple[Path, Path | None]
 
 
 class TopconLookupTests(unittest.TestCase):
+    def test_hist0011_without_patient_export_uses_index_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            (data_dir / "HIST0011").write_bytes(_history_record())
+            ids_path = data_dir / "ids.txt"
+            ids_path.write_text("000123\n999999\n", encoding="utf-8")
+            result = lookup_patient_ids(data_dir, load_ids_file(ids_path))
+            self.assertIsNone(result.dataset.patients_file)
+            self.assertIsNone(result.dataset.label_file)
+            self.assertEqual(result.summaries[0].match_status, STATUS_INDEX_ONLY)
+            self.assertEqual(result.summaries[0].patient_name, "测试患者")
+            self.assertEqual(result.summaries[0].birth_date, "2016-01-02")
+            self.assertIn("HIST0011", result.summaries[0].notes)
+            self.assertEqual(result.summaries[1].match_status, STATUS_NOT_FOUND)
+            self.assertEqual(result.images[0].image_filename, "IM000042.JPG")
+
+            image_root = root / "images"
+            image_root.mkdir()
+            (image_root / "IM000042.JPG").write_bytes(b"synthetic-jpeg")
+            result = lookup_patient_ids(data_dir, ["000123"], image_root=image_root)
+            copied = copy_selected_images(result, root / "selected")
+            destination = Path(copied.records[0].destination_path)
+            self.assertEqual(destination.parent.name, "000123_2016-01-02_女")
+            self.assertEqual(destination.read_bytes(), b"synthetic-jpeg")
+            output = write_feedback_workbook(result, root / "report.xlsx", copy_result=copied)
+            workbook = load_workbook(output)
+            self.assertEqual(workbook["查询汇总"]["B7"].value, "000123")
+            workbook.close()
+
+    def test_id_file_beside_patient_export_is_not_an_ambiguous_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir, _ = _make_dataset(Path(temp_dir))
+            (data_dir / "ids.txt").write_text("000123\n", encoding="utf-8")
+            result = lookup_patient_ids(data_dir, ["000123"])
+            self.assertEqual(result.dataset.patients_file.name, "patients.TXT")
+            self.assertEqual(result.summaries[0].match_status, STATUS_COMPLETE)
+
+    def test_multiple_history_files_require_selecting_one_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "HIST0010").write_bytes(_history_record())
+            (root / "HIST0011").write_bytes(_history_record())
+            with self.assertRaisesRegex(TopconFormatError, "2 个 HIST"):
+                locate_dataset(root)
+
+    def test_malformed_patient_export_is_not_silently_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "hist0011").write_bytes(_history_record())
+            (root / "patients.txt").write_text("000123,invalid\n", encoding="ascii")
+            with self.assertRaisesRegex(TopconFormatError, "预期为 6 列"):
+                lookup_patient_ids(root, ["000123"])
+
     def test_lookup_finds_metadata_and_actual_image(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir, image_path = _make_dataset(Path(temp_dir))

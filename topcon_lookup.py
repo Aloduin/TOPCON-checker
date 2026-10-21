@@ -7,6 +7,7 @@ The graphical interface in ``topcon_lookup_gui.py`` uses the same functions.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -27,6 +28,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from parse_topcon import (
+    HISTORY_FILENAME_RE,
     ImageRecord,
     PatientRecord,
     TopconFormatError,
@@ -63,7 +65,7 @@ FILE_DUPLICATE = "同名文件多个"
 class DatasetFiles:
     root: Path
     metadata_dir: Path
-    patients_file: Path
+    patients_file: Path | None
     history_file: Path
     label_file: Path | None
 
@@ -239,24 +241,42 @@ def load_ids_file(path: str | Path) -> list[str]:
 
 
 def locate_dataset(root: str | Path) -> DatasetFiles:
-    """Locate one HIST0010 dataset below a full-copy directory."""
+    """Locate one HIST dataset and an optional six-column patient export."""
 
     root_path = Path(root).resolve()
     if not root_path.is_dir():
         raise TopconFormatError(f"数据目录不存在：{root_path}")
     history_candidates = sorted(
-        path for path in root_path.rglob("*") if path.is_file() and path.name.upper() == "HIST0010"
+        path for path in root_path.rglob("*")
+        if path.is_file() and HISTORY_FILENAME_RE.fullmatch(path.name)
     )
     if len(history_candidates) != 1:
         raise TopconFormatError(
-            f"数据目录中找到 {len(history_candidates)} 个 HIST0010；请直接选择包含目标数据集的目录"
+            f"数据目录中找到 {len(history_candidates)} 个 HIST 图片索引（HIST + 四位数字）；"
+            "请直接选择仅包含一个目标索引的目录"
         )
     history_file = history_candidates[0]
     metadata_dir = history_file.parent
-    patient_candidates = sorted(
-        path for path in metadata_dir.iterdir() if path.is_file() and path.suffix.lower() == ".txt"
-    )
-    if len(patient_candidates) != 1:
+    patient_candidates = []
+    for path in sorted(metadata_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() != ".txt":
+            continue
+        # ID-only TXT files may sit beside the metadata; they are query inputs,
+        # not patient exports. Multi-column files must still pass validation.
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                text = path.read_text(encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise TopconFormatError(f"{path.name} 不是有效的 UTF-8 或 GB18030 文本")
+        rows = csv.reader(text.splitlines())
+        first_row = next((row for row in rows if any(value.strip() for value in row)), [])
+        if len(first_row) > 1:
+            parse_patients(path)
+            patient_candidates.append(path)
+    if len(patient_candidates) > 1:
         raise TopconFormatError(
             f"{metadata_dir} 中找到 {len(patient_candidates)} 个患者 TXT 文件，无法自动确定"
         )
@@ -264,7 +284,7 @@ def locate_dataset(root: str | Path) -> DatasetFiles:
     return DatasetFiles(
         root=root_path,
         metadata_dir=metadata_dir,
-        patients_file=patient_candidates[0],
+        patients_file=patient_candidates[0] if patient_candidates else None,
         history_file=history_file,
         label_file=label_path if label_path.is_file() else None,
     )
@@ -328,7 +348,7 @@ def lookup_patient_ids(
         raise ValueError("没有可查询的患者 ID")
 
     dataset = locate_dataset(data_root)
-    patients = parse_patients(dataset.patients_file)
+    patients = parse_patients(dataset.patients_file) if dataset.patients_file else []
     history = parse_history(dataset.history_file)
     resolved_image_root = Path(image_root).resolve() if image_root else dataset.root
     image_files = index_image_files(resolved_image_root)
@@ -371,7 +391,7 @@ def lookup_patient_ids(
                     image_files_found=0,
                     image_files_missing=0,
                     latest_capture_date="",
-                    notes="请核对患者号原始格式" if ambiguous else "患者清单和 HIST0010 中均未找到",
+                    notes="请核对患者号原始格式" if ambiguous else "患者清单和 HIST 图片索引中均未找到",
                 )
             )
             continue
@@ -439,7 +459,7 @@ def lookup_patient_ids(
 
         notes: list[str] = []
         if patient is None:
-            notes.append("仅在 HIST0010 中找到患者信息")
+            notes.append(f"仅在 {dataset.history_file.name} 中找到患者信息")
         if match_mode != "精确匹配":
             notes.append(match_mode)
         if duplicate_count:
@@ -895,7 +915,7 @@ def _build_exception_rows(
         if summary.match_status in {STATUS_NOT_FOUND, STATUS_AMBIGUOUS}:
             suggestion = "核对患者号及前导零；必要时启用唯一前导零匹配"
         elif summary.match_status == STATUS_NO_INDEX:
-            suggestion = "患者清单存在，但 HIST0010 没有该患者的图片索引"
+            suggestion = "患者清单存在，但 HIST 文件没有该患者的图片索引"
         else:
             suggestion = "检查图片文件夹是否完整拷贝，并核对图片根目录"
         rows.append(
@@ -1048,7 +1068,7 @@ def write_feedback_workbook(
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="按患者 ID 查询 TOPCON 全量拷贝并生成 Excel 反馈")
-    parser.add_argument("data_dir", help="全量拷贝目录或包含 HIST0010 的目录")
+    parser.add_argument("data_dir", help="数据目录或包含 HIST 图片索引的目录（如 HIST0010、HIST0011）")
     parser.add_argument("--ids", help="逗号、空格或换行分隔的患者 ID")
     parser.add_argument("--ids-file", help="TXT、CSV 或 XLSX ID 文件")
     parser.add_argument("--image-root", help="图片根目录；默认与 data_dir 相同")

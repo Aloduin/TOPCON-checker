@@ -16,6 +16,7 @@ wheels/
 
 # Hospital source data and parsed exports may contain patient-identifying information
 data/
+sample/
 output/
 TOPCON核查_*/
 *.xlsx
